@@ -7,7 +7,7 @@ use smithay::{
     backend::input::{Axis, AxisSource, ButtonState, KeyState},
     delegate_compositor, delegate_data_device, delegate_input_method_manager, delegate_output,
     delegate_primary_selection, delegate_seat, delegate_shm, delegate_text_input_manager,
-    delegate_virtual_keyboard_manager, delegate_xdg_shell,
+    delegate_virtual_keyboard_manager, delegate_xdg_decoration, delegate_xdg_shell,
     desktop::{PopupKeyboardGrab, PopupKind, PopupManager, PopupPointerGrab},
     input::{
         Seat, SeatHandler, SeatState,
@@ -16,7 +16,10 @@ use smithay::{
     },
     output::{Mode, Output, PhysicalProperties, Subpixel},
     reexports::{
-        wayland_protocols::xdg::shell::server::xdg_toplevel,
+        wayland_protocols::xdg::{
+            decoration::zv1::server::zxdg_toplevel_decoration_v1::Mode as DecorationMode,
+            shell::server::xdg_toplevel,
+        },
         wayland_server::{
             Client, DisplayHandle, Resource,
             backend::{ClientData, ClientId, DisconnectReason},
@@ -48,6 +51,7 @@ use smithay::{
         shell::xdg::{
             Configure, PopupSurface, PositionerState, SurfaceCachedState, ToplevelSurface,
             XdgShellHandler, XdgShellState, XdgToplevelSurfaceData,
+            decoration::{XdgDecorationHandler, XdgDecorationState},
         },
         shm::{ShmHandler, ShmState, with_buffer_contents},
         text_input::{TextInputManagerState, TextInputSeat},
@@ -112,6 +116,7 @@ pub struct State {
     dh: DisplayHandle,
     compositor: CompositorState,
     xdg: XdgShellState,
+    _decoration: XdgDecorationState,
     shm: ShmState,
     seat_state: SeatState<Self>,
     seat: Seat<Self>,
@@ -182,6 +187,7 @@ impl State {
         Ok(Self {
             compositor,
             xdg,
+            _decoration: XdgDecorationState::new::<Self>(&dh),
             shm,
             seat_state,
             seat,
@@ -809,6 +815,7 @@ impl State {
             .env("QT_QUICK_BACKEND", "software")
             .env("GDK_BACKEND", "wayland")
             .env("GSK_RENDERER", "cairo")
+            .env("GTK_CSD", "0")
             .stdin(Stdio::null());
         if x11 {
             command
@@ -1286,3 +1293,31 @@ delegate_text_input_manager!(State);
 delegate_input_method_manager!(State);
 
 delegate_virtual_keyboard_manager!(State);
+
+// Negotiation transfers traditional decoration responsibility away from clients.
+// Shell supplies external spatial controls instead of drawing a titlebar/frame.
+impl XdgDecorationHandler for State {
+    fn new_decoration(&mut self, toplevel: ToplevelSurface) {
+        self.server_side_decoration(toplevel);
+    }
+    fn request_mode(&mut self, toplevel: ToplevelSurface, _: DecorationMode) {
+        self.server_side_decoration(toplevel);
+    }
+    fn unset_mode(&mut self, toplevel: ToplevelSurface) {
+        self.server_side_decoration(toplevel);
+    }
+}
+impl State {
+    fn server_side_decoration(&mut self, toplevel: ToplevelSurface) {
+        toplevel
+            .with_pending_state(|state| state.decoration_mode = Some(DecorationMode::ServerSide));
+        toplevel.send_configure();
+        println!(
+            "XR_WAYLAND_DECORATION surface={} mode=server_side traditional_frame=false",
+            self.id_for(toplevel.wl_surface())
+                .map(|id| id.to_string())
+                .unwrap_or_else(|| "unregistered".into())
+        );
+    }
+}
+delegate_xdg_decoration!(State);

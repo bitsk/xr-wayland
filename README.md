@@ -90,3 +90,17 @@ The package includes original third-party license texts and an SPDX index.
 Shell `SessionEnding` is consumed before another write or EOF read and exits
 through the normal cleanup path with status zero. An unannounced transport
 failure remains an error. This does not change the SIGINT/SIGTERM or timer paths.
+
+## Spatial window decoration policy
+
+The private display advertises zxdg_decoration_manager_v1. New decorations,
+client mode requests and mode resets are configured as ServerSide, transferring
+traditional decoration responsibility to the compositor. This service draws no
+traditional titlebar or rectangle frame; Shell owns external spatial grab/orb
+controls. The entire client texture and its input coordinate system are retained.
+
+Only applications launched by this service receive GTK_CSD=0. This environment
+setting cannot remove a custom application GtkHeaderBar. Applications that do
+not use xdg-decoration or paint their own chrome require a real application or
+toolkit adaptation; negotiation is not proof their texture is decoration-free.
+The existing desktop and global GTK/Qt settings are not changed.

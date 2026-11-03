@@ -1,3 +1,10 @@
+xr-wayland (0.1.2) unstable; urgency=medium
+
+  * Negotiate server-side xdg decorations without drawing a desktop frame.
+  * Set GTK_CSD=0 only for application children launched by this service.
+
+ -- bits <bigbits@hackx.cc>  Wed, 04 Nov 2026 00:40:46 +0800
+
 xr-wayland (0.1.1) unstable; urgency=medium
 
   * Treat an ordered Shell SessionEnding message as normal session exit.
