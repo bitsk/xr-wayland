@@ -831,7 +831,11 @@ impl State {
             command
                 .env("DISPLAY", self.x11_display.as_ref().unwrap())
                 .env("QT_QPA_PLATFORM", "xcb")
-                .env("GDK_BACKEND", "x11");
+                .env("GDK_BACKEND", "x11")
+                // The profile's Wayland input modules require a Wayland GDK/
+                // QPA display. X11 children need their own platform context.
+                .env("GTK_IM_MODULE", "xim")
+                .env("QT_IM_MODULE", "compose");
         }
         command.process_group(0);
         let child = command.spawn()?;

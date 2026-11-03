@@ -108,3 +108,10 @@ The existing desktop and global GTK/Qt settings are not changed.
 GTK 3.24's Wayland backend specifically checks the legacy KDE decoration
 manager's default Server mode, so that compatibility global is also advertised.
 See [actual toolkit paths and capability boundaries](docs/decoration-policy.md).
+
+X11 application children explicitly use `GTK_IM_MODULE=xim` and
+`QT_IM_MODULE=compose` together with the private Xwayland DISPLAY. This avoids
+inheriting a Wayland-only input module from the XR profile. Native Wayland
+children retain the profile's input-method environment. XIM requires a reachable
+input-method server for language conversion; selecting the context alone does
+not establish CJK preedit or committed-text acceptance.

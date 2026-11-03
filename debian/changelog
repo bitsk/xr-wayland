@@ -1,3 +1,11 @@
+xr-wayland (0.1.4) unstable; urgency=medium
+
+  * Select GTK XIM and Qt compose contexts for explicitly launched X11 apps.
+  * Prevent inherited Wayland-only input modules from crashing X11 clients.
+  * Keep native Wayland child input-method configuration unchanged.
+
+ -- bits <bigbits@hackx.cc>  Wed, 04 Nov 2026 02:31:48 +0800
+
 xr-wayland (0.1.3) unstable; urgency=medium
 
   * Advertise legacy KDE server decoration preference required by GTK 3.24.
