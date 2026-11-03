@@ -40,6 +40,7 @@ impl State {
                 XWaylandEvent::Error => eprintln!("XR_XWAYLAND_START_FAILED=1"),
             })
             .map_err(|e| anyhow::anyhow!("insert Xwayland source: {e}"))?;
+        self.xwayland_handle = Some(handle);
         self.xwayland_loop = Some(event_loop);
         Ok(())
     }
@@ -52,13 +53,31 @@ impl State {
         Ok(())
     }
     fn associate_x11(&mut self, wl: WlSurface, window: X11Surface) {
-        let id = self.register(wl.clone(), "xwayland", None);
+        let parent = window.is_transient_for().and_then(|parent_xid| {
+            self.surfaces
+                .values()
+                .find(|s| s.x11.as_ref().is_some_and(|x| x.window_id() == parent_xid))
+                .map(|s| s.id)
+        });
         let geometry = window.geometry();
+        let parent_origin = parent
+            .and_then(|id| self.surfaces.get(&id))
+            .and_then(|s| s.x11.as_ref())
+            .map(|s| s.geometry().loc)
+            .unwrap_or_default();
+        let id = self.register(wl.clone(), "xwayland", parent);
         let s = self.surfaces.get_mut(&id).unwrap();
         s.app_id = window.class();
         s.title = window.title();
         s.width = geometry.size.w.max(1);
         s.height = geometry.size.h.max(1);
+        s.parent = parent;
+        if parent.is_some() {
+            s.popup_position = (
+                geometry.loc.x - parent_origin.x,
+                geometry.loc.y - parent_origin.y,
+            );
+        }
         s.x11 = Some(window);
         self.window_state(id);
         self.capture_surface(&wl);
@@ -171,6 +190,48 @@ impl XwmHandler for State {
                 self.window_state(id);
             }
         }
+    }
+    fn allow_selection_access(&mut self, _: XwmId, _: SelectionTarget) -> bool {
+        true
+    }
+    fn send_selection(&mut self, _: XwmId, target: SelectionTarget, mime: String, fd: OwnedFd) {
+        let text = match target {
+            SelectionTarget::Clipboard => {
+                current_data_device_selection_userdata(&self.seat).map(|s| s.clone())
+            }
+            SelectionTarget::Primary => {
+                current_primary_selection_userdata(&self.seat).map(|s| s.clone())
+            }
+        };
+        if let Some(text) = text {
+            std::thread::spawn(move || {
+                let _ = std::fs::File::from(fd).write_all(text.as_bytes());
+            });
+        } else {
+            let result = match target {
+                SelectionTarget::Clipboard => {
+                    request_data_device_client_selection(&self.seat, mime, fd)
+                        .map_err(|e| e.to_string())
+                }
+                SelectionTarget::Primary => request_primary_client_selection(&self.seat, mime, fd)
+                    .map_err(|e| e.to_string()),
+            };
+            if let Err(error) = result {
+                eprintln!("XR_XWM_SELECTION_ERROR={error}");
+            }
+        }
+    }
+    fn new_selection(&mut self, _: XwmId, target: SelectionTarget, types: Vec<String>) {
+        if let Some(mime) = ["text/plain;charset=utf-8", "text/plain", "UTF8_STRING"]
+            .iter()
+            .find(|m| types.iter().any(|t| t == **m))
+        {
+            self.x11_selections.push((target, (*mime).into()));
+        }
+    }
+    fn cleared_selection(&mut self, _: XwmId, target: SelectionTarget) {
+        // The next real owner drives the corresponding seat selection update.
+        self.x11_selections.retain(|(ty, _)| *ty != target);
     }
     fn resize_request(&mut self, _: XwmId, _: X11Surface, _: u32, _: ResizeEdge) {}
     fn move_request(&mut self, _: XwmId, _: X11Surface, _: u32) {}

@@ -7,7 +7,7 @@ use smithay::{
     backend::input::{Axis, AxisSource, ButtonState, KeyState},
     delegate_compositor, delegate_data_device, delegate_input_method_manager, delegate_output,
     delegate_primary_selection, delegate_seat, delegate_shm, delegate_text_input_manager,
-    delegate_xdg_shell,
+    delegate_virtual_keyboard_manager, delegate_xdg_shell,
     desktop::{PopupKeyboardGrab, PopupKind, PopupManager, PopupPointerGrab},
     input::{
         Seat, SeatHandler, SeatState,
@@ -37,12 +37,12 @@ use smithay::{
             SelectionHandler, SelectionSource, SelectionTarget,
             data_device::{
                 ClientDndGrabHandler, DataDeviceHandler, DataDeviceState, ServerDndGrabHandler,
-                request_data_device_client_selection, set_data_device_focus,
-                set_data_device_selection,
+                current_data_device_selection_userdata, request_data_device_client_selection,
+                set_data_device_focus, set_data_device_selection,
             },
             primary_selection::{
-                PrimarySelectionHandler, PrimarySelectionState, request_primary_client_selection,
-                set_primary_focus,
+                PrimarySelectionHandler, PrimarySelectionState, current_primary_selection_userdata,
+                request_primary_client_selection, set_primary_focus, set_primary_selection,
             },
         },
         shell::xdg::{
@@ -51,6 +51,7 @@ use smithay::{
         },
         shm::{ShmHandler, ShmState, with_buffer_contents},
         text_input::{TextInputManagerState, TextInputSeat},
+        virtual_keyboard::VirtualKeyboardManagerState,
     },
 };
 use std::{
@@ -103,6 +104,8 @@ struct ClipboardRead {
     fd: std::fs::File,
     mime: String,
     started: Instant,
+    target: SelectionTarget,
+    origin: &'static str,
 }
 
 pub struct State {
@@ -116,10 +119,13 @@ pub struct State {
     primary: PrimarySelectionState,
     _text_input: TextInputManagerState,
     _input_method: InputMethodManagerState,
+    _virtual_keyboard: VirtualKeyboardManagerState,
     output: Output,
     xwayland_shell: smithay::wayland::xwayland_shell::XWaylandShellState,
     xwayland_loop: Option<smithay::reexports::calloop::EventLoop<'static, State>>,
     xwm: Option<smithay::xwayland::X11Wm>,
+    xwayland_handle: Option<smithay::reexports::calloop::LoopHandle<'static, State>>,
+    x11_selections: Vec<(SelectionTarget, String)>,
     x11_display: Option<String>,
     x11_windows: Vec<smithay::xwayland::X11Surface>,
     pending_x11_launches: Vec<String>,
@@ -182,11 +188,14 @@ impl State {
             primary: PrimarySelectionState::new::<Self>(&dh),
             _text_input: TextInputManagerState::new::<Self>(&dh),
             _input_method: InputMethodManagerState::new::<Self, _>(&dh, |_| true),
+            _virtual_keyboard: VirtualKeyboardManagerState::new::<Self, _>(&dh, |_| true),
             dh: dh.clone(),
             output,
             xwayland_shell: smithay::wayland::xwayland_shell::XWaylandShellState::new::<Self>(&dh),
             xwayland_loop: None,
             xwm: None,
+            xwayland_handle: None,
+            x11_selections: Vec::new(),
             x11_display: None,
             x11_windows: Vec::new(),
             pending_x11_launches: Vec::new(),
@@ -211,6 +220,16 @@ impl State {
         })
     }
     fn emit(&mut self, kind: &'static str, payload: Value) {
+        if kind == "WindowState" {
+            if let Some(existing) =
+                self.metadata.iter_mut().rev().find(|old| {
+                    old.kind == kind && old.payload["surface_id"] == payload["surface_id"]
+                })
+            {
+                existing.payload = payload;
+                return;
+            }
+        }
         self.metadata.push_back(Outgoing {
             kind,
             payload,
@@ -476,6 +495,15 @@ impl State {
                                 vec!["text/plain;charset=utf-8".into(), "text/plain".into()],
                                 text.to_owned(),
                             );
+                            if let Some(wm) = &mut self.xwm {
+                                let _ = wm.new_selection(
+                                    SelectionTarget::Clipboard,
+                                    Some(vec![
+                                        "text/plain;charset=utf-8".into(),
+                                        "text/plain".into(),
+                                    ]),
+                                );
+                            }
                             self.emit("ClipboardChanged",json!({"mime_type":"text/plain;charset=utf-8","text":text,"origin":"shell"}));
                         }
                         "Error" => eprintln!("XR_WAYLAND_SHELL_ERROR={p}"),
@@ -817,7 +845,16 @@ impl State {
         });
     }
     fn poll_clipboard(&mut self) {
-        for (ty, mime) in std::mem::take(&mut self.clipboard_requests) {
+        let mut requests: Vec<_> = std::mem::take(&mut self.clipboard_requests)
+            .into_iter()
+            .map(|(ty, mime)| (ty, mime, "wayland"))
+            .collect();
+        requests.extend(
+            std::mem::take(&mut self.x11_selections)
+                .into_iter()
+                .map(|(ty, mime)| (ty, mime, "x11")),
+        );
+        for (ty, mime, origin) in requests {
             let mut fds = [-1; 2];
             if unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_CLOEXEC) } < 0 {
                 continue;
@@ -827,12 +864,22 @@ impl State {
             unsafe {
                 libc::fcntl(fds[0], libc::F_SETFL, libc::O_NONBLOCK);
             }
-            let request = match ty {
-                SelectionTarget::Clipboard => {
-                    request_data_device_client_selection(&self.seat, mime.clone(), writer).is_ok()
+            let request = if origin == "x11" {
+                match (&mut self.xwm, &self.xwayland_handle) {
+                    (Some(wm), Some(handle)) => wm
+                        .send_selection(ty, mime.clone(), writer, handle.clone())
+                        .is_ok(),
+                    _ => false,
                 }
-                SelectionTarget::Primary => {
-                    request_primary_client_selection(&self.seat, mime.clone(), writer).is_ok()
+            } else {
+                match ty {
+                    SelectionTarget::Clipboard => {
+                        request_data_device_client_selection(&self.seat, mime.clone(), writer)
+                            .is_ok()
+                    }
+                    SelectionTarget::Primary => {
+                        request_primary_client_selection(&self.seat, mime.clone(), writer).is_ok()
+                    }
                 }
             };
             if request {
@@ -841,6 +888,8 @@ impl State {
                     fd: std::fs::File::from(reader),
                     mime,
                     started: Instant::now(),
+                    target: ty,
+                    origin,
                 });
             }
         }
@@ -851,7 +900,7 @@ impl State {
                 match read.fd.read(&mut chunk) {
                     Ok(0) => {
                         if let Ok(text) = String::from_utf8(read.bytes.clone()) {
-                            completed.push((read.mime.clone(), text));
+                            completed.push((read.target, read.mime.clone(), text, read.origin));
                         }
                         return false;
                     }
@@ -868,11 +917,26 @@ impl State {
                 }
             }
         });
-        for (mime, text) in completed {
-            self.emit(
-                "ClipboardChanged",
-                json!({"mime_type":mime,"text":text,"origin":"wayland"}),
-            );
+        for (target, mime, text, origin) in completed {
+            if origin == "x11" {
+                let types = vec!["text/plain;charset=utf-8".into(), "text/plain".into()];
+                // Keep the original X11 owner; the Wayland side gets an immutable
+                // copy and must not claim CLIPBOARD back through XWM here.
+                match target {
+                    SelectionTarget::Clipboard => {
+                        set_data_device_selection(&self.dh, &self.seat, types, text.clone())
+                    }
+                    SelectionTarget::Primary => {
+                        set_primary_selection(&self.dh, &self.seat, types, text.clone())
+                    }
+                }
+            }
+            if target == SelectionTarget::Clipboard {
+                self.emit(
+                    "ClipboardChanged",
+                    json!({"mime_type":mime,"text":text,"origin":origin}),
+                );
+            }
         }
     }
     pub fn shutdown(&mut self) {
@@ -1120,12 +1184,17 @@ impl SelectionHandler for State {
     ) {
         if let Some(source) = source {
             let types = source.mime_types();
+            if let Some(wm) = &mut self.xwm {
+                let _ = wm.new_selection(ty, Some(types.clone()));
+            }
             if let Some(mime) = ["text/plain;charset=utf-8", "text/plain", "UTF8_STRING"]
                 .iter()
                 .find(|m| types.iter().any(|t| t == **m))
             {
                 self.clipboard_requests.push((ty, (*mime).into()));
             }
+        } else if let Some(wm) = &mut self.xwm {
+            let _ = wm.new_selection(ty, None);
         }
     }
     fn send_selection(
@@ -1191,3 +1260,5 @@ delegate_data_device!(State);
 delegate_primary_selection!(State);
 delegate_text_input_manager!(State);
 delegate_input_method_manager!(State);
+
+delegate_virtual_keyboard_manager!(State);

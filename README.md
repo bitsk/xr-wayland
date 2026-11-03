@@ -20,6 +20,7 @@ xr-window-server --shell-socket "$XDG_RUNTIME_DIR/xr-desktop/shell.sock" \
 into argv, never evaluated by a shell. Per-application environment selects the
 private Wayland display and software rendering for the initial SHM path.
 Applications may also be started externally with the advertised WAYLAND_DISPLAY.
+Use a private session bus when an application has a DBus single-instance path.
 Package installation must not start this server or change the existing desktop.
 
 Current implementation has private Wayland, xdg toplevel/popup state,
@@ -38,7 +39,10 @@ xr-window-server --xwayland --launch-x11 qterminal \
 The service starts Xwayland with software SHM transport and prints its private
 DISPLAY only after the XWM is ready. Native and X11 launch arguments may be
 combined. X11 map/configure/close and title/class changes use the real XWM. X11
-selection forwarding is not part of this checkpoint. Shell control errors are
+clipboard and primary selections use the XWM selection FD protocol and the real
+Wayland seat selection. Text payloads are bounded to 60 kB; unfinished transfers
+expire after 3 seconds. Input-method-v2 keyboard grabs are paired with the
+virtual-keyboard-v1 protocol for unconsumed keys. Shell control errors are
 reported without terminating the Wayland application service. Service exit
 terminates and reaps only the child process groups it launched; externally
 started clients are disconnected when the private display closes.
