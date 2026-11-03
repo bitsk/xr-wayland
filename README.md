@@ -104,3 +104,7 @@ setting cannot remove a custom application GtkHeaderBar. Applications that do
 not use xdg-decoration or paint their own chrome require a real application or
 toolkit adaptation; negotiation is not proof their texture is decoration-free.
 The existing desktop and global GTK/Qt settings are not changed.
+
+GTK 3.24's Wayland backend specifically checks the legacy KDE decoration
+manager's default Server mode, so that compatibility global is also advertised.
+See [actual toolkit paths and capability boundaries](docs/decoration-policy.md).

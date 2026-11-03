@@ -5,9 +5,10 @@ use anyhow::{Context, Result, bail, ensure};
 use serde_json::{Value, json};
 use smithay::{
     backend::input::{Axis, AxisSource, ButtonState, KeyState},
-    delegate_compositor, delegate_data_device, delegate_input_method_manager, delegate_output,
-    delegate_primary_selection, delegate_seat, delegate_shm, delegate_text_input_manager,
-    delegate_virtual_keyboard_manager, delegate_xdg_decoration, delegate_xdg_shell,
+    delegate_compositor, delegate_data_device, delegate_input_method_manager,
+    delegate_kde_decoration, delegate_output, delegate_primary_selection, delegate_seat,
+    delegate_shm, delegate_text_input_manager, delegate_virtual_keyboard_manager,
+    delegate_xdg_decoration, delegate_xdg_shell,
     desktop::{PopupKeyboardGrab, PopupKind, PopupManager, PopupPointerGrab},
     input::{
         Seat, SeatHandler, SeatState,
@@ -19,6 +20,10 @@ use smithay::{
         wayland_protocols::xdg::{
             decoration::zv1::server::zxdg_toplevel_decoration_v1::Mode as DecorationMode,
             shell::server::xdg_toplevel,
+        },
+        wayland_protocols_misc::server_decoration::server::{
+            org_kde_kwin_server_decoration::{Mode as KdeMode, OrgKdeKwinServerDecoration},
+            org_kde_kwin_server_decoration_manager::Mode as KdeDefaultMode,
         },
         wayland_server::{
             Client, DisplayHandle, Resource,
@@ -48,6 +53,7 @@ use smithay::{
                 request_primary_client_selection, set_primary_focus, set_primary_selection,
             },
         },
+        shell::kde::decoration::{KdeDecorationHandler, KdeDecorationState},
         shell::xdg::{
             Configure, PopupSurface, PositionerState, SurfaceCachedState, ToplevelSurface,
             XdgShellHandler, XdgShellState, XdgToplevelSurfaceData,
@@ -117,6 +123,8 @@ pub struct State {
     compositor: CompositorState,
     xdg: XdgShellState,
     _decoration: XdgDecorationState,
+    kde_decoration: KdeDecorationState,
+    kde_mode_requests: HashMap<smithay::reexports::wayland_server::backend::ObjectId, u32>,
     shm: ShmState,
     seat_state: SeatState<Self>,
     seat: Seat<Self>,
@@ -188,6 +196,8 @@ impl State {
             compositor,
             xdg,
             _decoration: XdgDecorationState::new::<Self>(&dh),
+            kde_decoration: KdeDecorationState::new::<Self>(&dh, KdeDefaultMode::Server),
+            kde_mode_requests: HashMap::new(),
             shm,
             seat_state,
             seat,
@@ -1321,3 +1331,42 @@ impl State {
     }
 }
 delegate_xdg_decoration!(State);
+
+// GTK 3.24's Wayland backend checks this legacy manager's default mode,
+// not xdg-decoration or GTK_CSD, before creating its fallback headerbar.
+impl KdeDecorationHandler for State {
+    fn kde_decoration_state(&self) -> &KdeDecorationState {
+        &self.kde_decoration
+    }
+    fn new_decoration(&mut self, surface: &WlSurface, decoration: &OrgKdeKwinServerDecoration) {
+        self.kde_mode_requests
+            .insert(decoration.id(), KdeMode::Server as u32);
+        decoration.mode(KdeMode::Server);
+        println!(
+            "XR_WAYLAND_DECORATION surface={} protocol=kde mode=server_side traditional_frame=false",
+            self.id_for(surface)
+                .map(|id| id.to_string())
+                .unwrap_or_else(|| "unregistered".into())
+        );
+    }
+    fn request_mode(
+        &mut self,
+        _: &WlSurface,
+        decoration: &OrgKdeKwinServerDecoration,
+        mode: smithay::reexports::wayland_server::WEnum<KdeMode>,
+    ) {
+        let requested = match mode {
+            smithay::reexports::wayland_server::WEnum::Value(mode) => mode as u32,
+            smithay::reexports::wayland_server::WEnum::Unknown(value) => value,
+        };
+        // A client may acknowledge by repeating a request. Do not produce an
+        // endless request/event loop if it insists on the same preferred mode.
+        if self.kde_mode_requests.insert(decoration.id(), requested) != Some(requested) {
+            decoration.mode(KdeMode::Server);
+        }
+    }
+    fn release(&mut self, decoration: &OrgKdeKwinServerDecoration, _: &WlSurface) {
+        self.kde_mode_requests.remove(&decoration.id());
+    }
+}
+delegate_kde_decoration!(State);
