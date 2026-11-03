@@ -66,3 +66,10 @@ on repeated metadata updates.
 Artwork and renderer/runtime code remain in their owning repositories. Cross-
 component architecture and acceptance records are maintained by the integration
 project. No physical-device support is inferred from this application service.
+
+Control messages carrying `origin_component_id` and `origin_request_id` receive
+`RequestResult` only after the Wayland owner handles them. A rejected focus,
+missing surface or inactive text-input-v3 object produces `success:false` with
+a reason. A successful result confirms protocol delivery, not that a client
+rendered the resulting text; target acceptance must inspect the actual client.
+`FocusChanged` keeps its separate `FocusApplied` acknowledgement.

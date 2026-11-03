@@ -479,6 +479,18 @@ impl State {
                                 } else {
                                     self.handle_window_message(kind, p)
                                 };
+                            if kind != "FocusChanged" {
+                                if let (Some(origin_component), Some(origin_request)) = (
+                                    p["origin_component_id"].as_str(),
+                                    p["origin_request_id"].as_str(),
+                                ) {
+                                    let mut response = json!({"origin_component_id":origin_component,"origin_request_id":origin_request,"operation":kind,"success":result.is_ok()});
+                                    if let Err(error) = &result {
+                                        response["message"] = format!("{error:#}").into();
+                                    }
+                                    self.emit("RequestResult", response);
+                                }
+                            }
                             if let Err(error) = result {
                                 eprintln!(
                                     "XR_WAYLAND_REQUEST_REJECTED type={kind} error={error:#}"
