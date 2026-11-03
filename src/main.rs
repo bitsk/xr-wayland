@@ -18,6 +18,7 @@ struct Options {
     shell_socket: PathBuf,
     seconds: u64,
     launch: Vec<String>,
+    launch_x11: Vec<String>,
     xwayland: bool,
 }
 fn options() -> Result<Options> {
@@ -27,6 +28,7 @@ fn options() -> Result<Options> {
         shell_socket: PathBuf::from(runtime).join("xr-desktop/shell.sock"),
         seconds: 0,
         launch: Vec::new(),
+        launch_x11: Vec::new(),
         xwayland: false,
     };
     let mut args = env::args().skip(1);
@@ -41,9 +43,12 @@ fn options() -> Result<Options> {
                 .launch
                 .push(args.next().context("missing desktop app ID")?),
             "--xwayland" => o.xwayland = true,
+            "--launch-x11" => o
+                .launch_x11
+                .push(args.next().context("missing X11 desktop ID")?),
             "--help" | "-h" => {
                 println!(
-                    "xr-window-server [--socket-name NAME] [--shell-socket PATH] [--seconds N] [--launch DESKTOP_ID] [--xwayland]"
+                    "xr-window-server [--socket-name NAME] [--shell-socket PATH] [--seconds N] [--launch DESKTOP_ID] [--xwayland --launch-x11 DESKTOP_ID]"
                 );
                 std::process::exit(0);
             }
@@ -81,6 +86,9 @@ fn run() -> Result<()> {
     for app in o.launch {
         state.launch(&app, false)?;
     }
+    for app in o.launch_x11 {
+        state.launch(&app, true)?;
+    }
     let start = Instant::now();
     let mut last_frame = Instant::now();
     while !quit.load(Ordering::Relaxed)
@@ -91,6 +99,7 @@ fn run() -> Result<()> {
                 .handle()
                 .insert_client(stream, Arc::new(server::ClientState::default()))?;
         }
+        state.dispatch_xwayland()?;
         state.dispatch_bridge()?;
         display.dispatch_clients(&mut state)?;
         state.flush_bridge()?;

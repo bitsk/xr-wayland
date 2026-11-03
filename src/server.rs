@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 use crate::bridge::{Bridge, Incoming, Outgoing};
+mod xwayland;
 use anyhow::{Context, Result, bail, ensure};
 use serde_json::{Value, json};
 use smithay::{
@@ -55,7 +56,10 @@ use smithay::{
 use std::{
     collections::{HashMap, VecDeque},
     io::{Read, Write},
-    os::fd::{FromRawFd, OwnedFd},
+    os::{
+        fd::{FromRawFd, OwnedFd},
+        unix::process::CommandExt,
+    },
     process::{Child, Command, Stdio},
     sync::mpsc,
     time::Instant,
@@ -76,6 +80,7 @@ struct Surface {
     id: u64,
     surface: WlSurface,
     top: Option<ToplevelSurface>,
+    x11: Option<smithay::xwayland::X11Surface>,
     popup: Option<PopupSurface>,
     parent: Option<u64>,
     width: i32,
@@ -112,6 +117,12 @@ pub struct State {
     _text_input: TextInputManagerState,
     _input_method: InputMethodManagerState,
     output: Output,
+    xwayland_shell: smithay::wayland::xwayland_shell::XWaylandShellState,
+    xwayland_loop: Option<smithay::reexports::calloop::EventLoop<'static, State>>,
+    xwm: Option<smithay::xwayland::X11Wm>,
+    x11_display: Option<String>,
+    x11_windows: Vec<smithay::xwayland::X11Surface>,
+    pending_x11_launches: Vec<String>,
     popups: PopupManager,
     surfaces: HashMap<u64, Surface>,
     next_surface: u64,
@@ -129,6 +140,7 @@ pub struct State {
     pub bridge: Bridge,
     snapshots_sent: u64,
     releases: u64,
+    stopped: bool,
 }
 impl State {
     pub fn new(dh: DisplayHandle, bridge: Bridge, socket_name: String) -> Result<Self> {
@@ -170,8 +182,14 @@ impl State {
             primary: PrimarySelectionState::new::<Self>(&dh),
             _text_input: TextInputManagerState::new::<Self>(&dh),
             _input_method: InputMethodManagerState::new::<Self, _>(&dh, |_| true),
-            dh,
+            dh: dh.clone(),
             output,
+            xwayland_shell: smithay::wayland::xwayland_shell::XWaylandShellState::new::<Self>(&dh),
+            xwayland_loop: None,
+            xwm: None,
+            x11_display: None,
+            x11_windows: Vec::new(),
+            pending_x11_launches: Vec::new(),
             popups: PopupManager::default(),
             surfaces: HashMap::new(),
             next_surface: 1,
@@ -189,6 +207,7 @@ impl State {
             bridge,
             snapshots_sent: 0,
             releases: 0,
+            stopped: false,
         })
     }
     fn emit(&mut self, kind: &'static str, payload: Value) {
@@ -217,6 +236,7 @@ impl State {
                 id,
                 surface: wl,
                 top: None,
+                x11: None,
                 popup: None,
                 parent,
                 width: 800,
@@ -428,9 +448,25 @@ impl State {
                     let p = &message["payload"];
                     match message["type"].as_str().unwrap_or("") {
                         "BufferRelease" => self.releases += 1,
-                        "FocusChanged" => self.focus_changed_message(p)?,
-                        "SurfaceInput" => self.surface_input(p)?,
-                        "WindowIntent" => self.window_intent(p)?,
+                        "FocusChanged" | "SurfaceInput" | "WindowIntent" => {
+                            let kind = message["type"].as_str().unwrap();
+                            let result =
+                                if let Some(generation) = p["window_server_generation"].as_str() {
+                                    if generation != self.bridge.generation {
+                                        Err(anyhow::anyhow!("stale window server generation"))
+                                    } else {
+                                        self.handle_window_message(kind, p)
+                                    }
+                                } else {
+                                    self.handle_window_message(kind, p)
+                                };
+                            if let Err(error) = result {
+                                eprintln!(
+                                    "XR_WAYLAND_REQUEST_REJECTED type={kind} error={error:#}"
+                                );
+                                self.emit("Error", json!({"code":"invalid_request","message":format!("{error:#}"),"request_id":message["request_id"]}));
+                            }
+                        }
                         "ClipboardSet" => {
                             let text = p["text"].as_str().unwrap_or("");
                             ensure!(text.len() <= 60000, "clipboard exceeds protocol limit");
@@ -449,6 +485,14 @@ impl State {
             }
         }
         Ok(())
+    }
+    fn handle_window_message(&mut self, kind: &str, p: &Value) -> Result<()> {
+        match kind {
+            "FocusChanged" => self.focus_changed_message(p),
+            "SurfaceInput" => self.surface_input(p),
+            "WindowIntent" => self.window_intent(p),
+            _ => unreachable!(),
+        }
     }
     fn focus_changed_message(&mut self, p: &Value) -> Result<()> {
         let epoch = p["focus_epoch"]
@@ -470,6 +514,21 @@ impl State {
         Ok(())
     }
     fn apply_focus(&mut self, id: Option<u64>) {
+        for s in self.surfaces.values() {
+            if let Some(x11) = &s.x11 {
+                let _ = x11.set_activated(Some(s.id) == id);
+            }
+            if let Some(top) = &s.top {
+                top.with_pending_state(|pending| {
+                    if Some(s.id) == id {
+                        pending.states.set(xdg_toplevel::State::Activated);
+                    } else {
+                        pending.states.unset(xdg_toplevel::State::Activated);
+                    }
+                });
+                top.send_pending_configure();
+            }
+        }
         let surface = id.and_then(|id| self.surfaces.get(&id).map(|s| s.surface.clone()));
         let keyboard = self.seat.get_keyboard().unwrap();
         keyboard.set_focus(self, surface, SERIAL_COUNTER.next_serial());
@@ -557,9 +616,10 @@ impl State {
                     active = true;
                 });
                 self.seat.text_input().done(false);
-                if !active {
-                    eprintln!("XR_WAYLAND_TEXT_INPUT_INACTIVE surface={id}");
-                }
+                ensure!(
+                    active,
+                    "focused application has no active text-input-v3 object"
+                );
             }
             "scroll" => {
                 let x = p["dx"].as_f64().unwrap_or(0.0);
@@ -594,6 +654,8 @@ impl State {
             "close" => {
                 if let Some(top) = s.top {
                     top.send_close();
+                } else if let Some(x11) = s.x11 {
+                    x11.close()?;
                 } else if let Some(popup) = s.popup {
                     popup.send_popup_done();
                 }
@@ -612,6 +674,10 @@ impl State {
                     top.send_configure();
                     self.surfaces.get_mut(&id).unwrap().configured = (width, height);
                     self.window_state(id);
+                } else if let Some(x11) = s.x11 {
+                    x11.configure(Some(Rectangle::new((0, 0).into(), (width, height).into())))?;
+                    self.surfaces.get_mut(&id).unwrap().configured = (width, height);
+                    self.window_state(id);
                 }
             }
             "focus" => {} // Spatial focus is changed only by FocusChanged/FocusApplied.
@@ -621,7 +687,11 @@ impl State {
         Ok(())
     }
     pub fn launch(&mut self, id: &str, x11: bool) -> Result<()> {
-        ensure!(!x11, "Xwayland display has not been configured");
+        if x11 && self.x11_display.is_none() {
+            ensure!(self.xwayland_loop.is_some(), "Xwayland was not enabled");
+            self.pending_x11_launches.push(id.to_owned());
+            return Ok(());
+        }
         ensure!(
             !id.contains('/') && !id.contains(".."),
             "application ID must be a desktop basename"
@@ -681,21 +751,26 @@ impl State {
             })
             .collect();
         let (program, args) = words.split_first().context("desktop Exec is empty")?;
-        let child = Command::new(program)
+        let mut command = Command::new(program);
+        command
             .args(args)
             .env("WAYLAND_DISPLAY", &self.socket_name)
             .env("QT_QPA_PLATFORM", "wayland")
             .env("QT_QUICK_BACKEND", "software")
             .env("GDK_BACKEND", "wayland")
             .env("GSK_RENDERER", "cairo")
-            .stdin(Stdio::null())
-            .spawn()?;
+            .stdin(Stdio::null());
+        if x11 {
+            command
+                .env("DISPLAY", self.x11_display.as_ref().unwrap())
+                .env("QT_QPA_PLATFORM", "xcb")
+                .env("GDK_BACKEND", "x11");
+        }
+        command.process_group(0);
+        let child = command.spawn()?;
         println!("XR_WAYLAND_APP_START id={id} pid={}", child.id());
         self.children.push(child);
         Ok(())
-    }
-    pub fn start_xwayland(&mut self) -> Result<()> {
-        bail!("Xwayland startup is not implemented yet")
     }
     pub fn send_frames(&mut self) {
         let time = self.started.elapsed().as_millis() as u32;
@@ -717,6 +792,13 @@ impl State {
     pub fn refresh(&mut self) {
         self.popups.cleanup();
         self.poll_clipboard();
+        if self.x11_display.is_some() {
+            for app in std::mem::take(&mut self.pending_x11_launches) {
+                if let Err(error) = self.launch(&app, true) {
+                    eprintln!("XR_XWAYLAND_APP_ERROR={error:#}");
+                }
+            }
+        }
         let dead: Vec<_> = self
             .surfaces
             .values()
@@ -794,6 +876,37 @@ impl State {
         }
     }
     pub fn shutdown(&mut self) {
+        if self.stopped {
+            return;
+        }
+        self.stopped = true;
+        // Only process groups created by this service are signalled. Child handles
+        // are retained until wait, preventing their PID from being reused here.
+        for child in &mut self.children {
+            if matches!(child.try_wait(), Ok(None)) {
+                unsafe {
+                    libc::kill(-(child.id() as i32), libc::SIGTERM);
+                }
+            }
+        }
+        let deadline = Instant::now() + std::time::Duration::from_millis(500);
+        while Instant::now() < deadline
+            && self
+                .children
+                .iter_mut()
+                .any(|c| matches!(c.try_wait(), Ok(None)))
+        {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        for child in &mut self.children {
+            if matches!(child.try_wait(), Ok(None)) {
+                unsafe {
+                    libc::kill(-(child.id() as i32), libc::SIGKILL);
+                }
+            }
+            let _ = child.wait();
+        }
+        self.children.clear();
         let ids: Vec<_> = self.surfaces.keys().copied().collect();
         for id in ids {
             self.remove(id);
@@ -806,6 +919,12 @@ impl State {
     }
 }
 
+impl Drop for State {
+    fn drop(&mut self) {
+        self.shutdown();
+    }
+}
+
 impl BufferHandler for State {
     fn buffer_destroyed(&mut self, _: &WlBuffer) {}
 }
@@ -814,7 +933,14 @@ impl CompositorHandler for State {
         &mut self.compositor
     }
     fn client_compositor_state<'a>(&self, client: &'a Client) -> &'a CompositorClientState {
-        &client.get_data::<ClientState>().unwrap().compositor
+        if let Some(data) = client.get_data::<ClientState>() {
+            &data.compositor
+        } else {
+            &client
+                .get_data::<smithay::xwayland::XWaylandClientData>()
+                .unwrap()
+                .compositor_state
+        }
     }
     fn commit(&mut self, surface: &WlSurface) {
         self.popups.commit(surface);

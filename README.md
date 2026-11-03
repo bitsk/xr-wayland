@@ -26,8 +26,22 @@ Current implementation has private Wayland, xdg toplevel/popup state,
 configure/ack/resize/close, pointer/keyboard seat, SHM snapshots, standard data
 selection and text-input-v3/input-method-v2 globals. Actual application, popup,
 clipboard and IME behaviour must be checked in the target system; compilation
-alone does not establish those acceptance results. Xwayland support is being
-integrated and is not available in the initial checkpoint.
+alone does not establish those acceptance results.
+
+For an independently owned Xwayland instance and a real X11 application:
+
+```sh
+xr-window-server --xwayland --launch-x11 qterminal \
+  --shell-socket "$XDG_RUNTIME_DIR/xr-desktop/shell.sock"
+```
+
+The service starts Xwayland with software SHM transport and prints its private
+DISPLAY only after the XWM is ready. Native and X11 launch arguments may be
+combined. X11 map/configure/close and title/class changes use the real XWM. X11
+selection forwarding is not part of this checkpoint. Shell control errors are
+reported without terminating the Wayland application service. Service exit
+terminates and reaps only the child process groups it launched; externally
+started clients are disconnected when the private display closes.
 
 ## Ownership
 
