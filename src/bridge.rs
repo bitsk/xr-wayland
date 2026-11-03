@@ -47,12 +47,21 @@ impl Bridge {
         let thread = thread::spawn(move || {
             let result = (|| -> Result<()> {
                 while !worker_stop.load(Ordering::Relaxed) {
+                    // SessionEnding is ordered before EOF on SOCK_SEQPACKET.
+                    // Deliver it before trying another write or reading EOF.
+                    if drain_incoming(&client, &events)? {
+                        return Ok(());
+                    }
                     if let Ok(command) = commands.try_recv() {
                         let fds: Vec<_> = command.fd.iter().map(|fd| fd.as_fd()).collect();
-                        client.send(command.kind, command.payload, &fds)?;
-                    }
-                    while let Some(packet) = client.recv(0)? {
-                        events.send(Incoming::Packet(packet.message))?;
+                        if let Err(error) = client.send(command.kind, command.payload, &fds) {
+                            // The peer may close between the read above and this
+                            // write, while its final SessionEnding is still queued.
+                            if drain_incoming(&client, &events)? {
+                                return Ok(());
+                            }
+                            return Err(error);
+                        }
                     }
                     thread::sleep(std::time::Duration::from_millis(1));
                 }
@@ -81,4 +90,15 @@ impl Drop for Bridge {
             let _ = thread.join();
         }
     }
+}
+
+fn drain_incoming(client: &Client, events: &mpsc::Sender<Incoming>) -> Result<bool> {
+    while let Some(packet) = client.recv(0)? {
+        let ending = packet.message["type"].as_str() == Some("SessionEnding");
+        events.send(Incoming::Packet(packet.message))?;
+        if ending {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }

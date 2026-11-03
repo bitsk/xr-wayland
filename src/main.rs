@@ -99,8 +99,11 @@ fn run() -> Result<()> {
                 .handle()
                 .insert_client(stream, Arc::new(server::ClientState::default()))?;
         }
-        state.dispatch_xwayland()?;
         state.dispatch_bridge()?;
+        if state.quit_requested {
+            break;
+        }
+        state.dispatch_xwayland()?;
         display.dispatch_clients(&mut state)?;
         state.flush_bridge()?;
         if last_frame.elapsed() >= Duration::from_millis(16) {

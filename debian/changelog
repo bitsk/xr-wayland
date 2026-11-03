@@ -1,3 +1,10 @@
+xr-wayland (0.1.1) unstable; urgency=medium
+
+  * Treat an ordered Shell SessionEnding message as normal session exit.
+  * Keep unannounced transport loss fatal and preserve child cleanup.
+
+ -- bits <bigbits@hackx.cc>  Wed, 04 Nov 2026 00:18:05 +0800
+
 xr-wayland (0.1.0) unstable; urgency=medium
 
   * Package the private Smithay Wayland/Xwayland application service.

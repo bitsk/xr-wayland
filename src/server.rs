@@ -147,6 +147,7 @@ pub struct State {
     snapshots_sent: u64,
     releases: u64,
     stopped: bool,
+    pub quit_requested: bool,
 }
 impl State {
     pub fn new(dh: DisplayHandle, bridge: Bridge, socket_name: String) -> Result<Self> {
@@ -217,6 +218,7 @@ impl State {
             snapshots_sent: 0,
             releases: 0,
             stopped: false,
+            quit_requested: false,
         })
     }
     fn emit(&mut self, kind: &'static str, payload: Value) {
@@ -466,6 +468,14 @@ impl State {
                 Incoming::Packet(message) => {
                     let p = &message["payload"];
                     match message["type"].as_str().unwrap_or("") {
+                        "SessionEnding" => {
+                            println!(
+                                "XR_WAYLAND_SESSION_ENDING reason={}",
+                                p["reason"].as_str().unwrap_or("session ending")
+                            );
+                            self.quit_requested = true;
+                            return Ok(());
+                        }
                         "BufferRelease" => self.releases += 1,
                         "FocusChanged" | "SurfaceInput" | "WindowIntent" => {
                             let kind = message["type"].as_str().unwrap();
@@ -987,7 +997,9 @@ impl State {
         for id in ids {
             self.remove(id);
         }
-        let _ = self.flush_bridge();
+        if !self.quit_requested {
+            let _ = self.flush_bridge();
+        }
         println!(
             "XR_WAYLAND_SUMMARY snapshots={} releases={}",
             self.snapshots_sent, self.releases

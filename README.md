@@ -76,7 +76,7 @@ rendered the resulting text; target acceptance must inspect the actual client.
 
 ## Debian package
 
-The independent `xr-window-server` 0.1.0 package depends on xr-shell >= 0.2.0
+The independent `xr-window-server` package depends on xr-shell >= 0.2.0
 and the library versions detected by dpkg-shlibdeps. Xwayland is recommended
 for the optional X11 path. No package script enables services or opens displays.
 
@@ -86,3 +86,7 @@ for the optional X11 path. No package script enables services or opens displays.
 transitive dependency set. Populate the Cargo cache before an offline build.
 Build with `dpkg-buildpackage -b -us -uc` after installing Build-Depends.
 The package includes original third-party license texts and an SPDX index.
+
+Shell `SessionEnding` is consumed before another write or EOF read and exits
+through the normal cleanup path with status zero. An unannounced transport
+failure remains an error. This does not change the SIGINT/SIGTERM or timer paths.
