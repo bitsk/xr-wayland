@@ -1,0 +1,12 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: xr-wayland
+
+Files: *
+Copyright: 2026 bits
+License: GPL-3.0-or-later
+ On Debian systems, see /usr/share/common-licenses/GPL-3.
+
+Comment:
+ Rust dependencies are pinned by Cargo.lock. The binary package includes
+ third-party-licenses/index.json and original dependency license texts,
+ including Smithay's MIT license and original contributor notices.

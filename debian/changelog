@@ -1,0 +1,7 @@
+xr-wayland (0.1.0) unstable; urgency=medium
+
+  * Package the private Smithay Wayland/Xwayland application service.
+  * Lock Smithay 0.7.0 and the xr-shell-protocols 0.2.0 SDK.
+  * Keep installation independent of desktop and service startup.
+
+ -- bits <bigbits@hackx.cc>  Wed, 04 Nov 2026 00:01:32 +0800

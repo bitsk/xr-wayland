@@ -1,0 +1,14 @@
+#!/usr/bin/make -f
+export RUSTFLAGS := $(RUSTFLAGS) --remap-path-prefix=$(CURDIR)=/usr/src/xr-wayland
+export RUSTFLAGS += --remap-path-prefix=$(abspath $(CURDIR)/..)=/usr/src/openkylin-xr
+ifneq ($(strip $(CARGO_HOME)),)
+export RUSTFLAGS += --remap-path-prefix=$(CARGO_HOME)=/usr/src/cargo
+endif
+%:
+	dh $@ --buildsystem=none
+override_dh_auto_build:
+	CARGO_TARGET_DIR="$(CURDIR)/target" python3 tools/build.py
+override_dh_auto_test:
+	@echo "Actual Wayland/Xwayland application and IME acceptance is performed in the isolated guest."
+override_dh_auto_clean:
+	rm -rf target build

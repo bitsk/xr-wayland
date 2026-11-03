@@ -73,3 +73,16 @@ missing surface or inactive text-input-v3 object produces `success:false` with
 a reason. A successful result confirms protocol delivery, not that a client
 rendered the resulting text; target acceptance must inspect the actual client.
 `FocusChanged` keeps its separate `FocusApplied` acknowledgement.
+
+## Debian package
+
+The independent `xr-window-server` 0.1.0 package depends on xr-shell >= 0.2.0
+and the library versions detected by dpkg-shlibdeps. Xwayland is recommended
+for the optional X11 path. No package script enables services or opens displays.
+
+`tools/build.py` selects the exact xr-shell-protocols 0.2.0 SDK from
+`XR_SHELL_PROTOCOLS_DIR`, the sibling checkout or the installed source SDK in
+`/usr/share/cargo/registry`. Cargo.lock pins Smithay 0.7.0 and the complete
+transitive dependency set. Populate the Cargo cache before an offline build.
+Build with `dpkg-buildpackage -b -us -uc` after installing Build-Depends.
+The package includes original third-party license texts and an SPDX index.

@@ -2,3 +2,11 @@
 /.reference/
 
 /handoff/
+/build/
+/debian/.debhelper/
+/debian/debhelper-build-stamp
+/debian/files
+/debian/*.substvars
+/debian/*/
+!/debian/source/
+!/debian/source/**
