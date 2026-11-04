@@ -1,3 +1,10 @@
+xr-wayland (0.1.6) unstable; urgency=medium
+
+  * Remove unmapped and destroyed X11 surfaces by their stable window ID.
+  * Release window records after the XWM detaches the Wayland surface.
+
+ -- bits <bigbits@hackx.cc>  Thu, 05 Nov 2026 01:48:11 +0800
+
 xr-wayland (0.1.5) unstable; urgency=medium
 
   * Clear inherited XR capabilities before executing desktop applications.

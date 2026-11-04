@@ -83,6 +83,25 @@ impl State {
         self.capture_surface(&wl);
     }
 }
+impl State {
+    fn remove_x11_window(&mut self, window: &X11Surface) {
+        // The XWM may detach wl_surface before UnmapNotify or DestroyNotify.
+        // Match our own records by the stable XID instead.
+        let ids: Vec<_> = self
+            .surfaces
+            .values()
+            .filter(|s| {
+                s.x11
+                    .as_ref()
+                    .is_some_and(|x| x.window_id() == window.window_id())
+            })
+            .map(|s| s.id)
+            .collect();
+        for id in ids {
+            self.remove(id);
+        }
+    }
+}
 impl XWaylandShellHandler for State {
     fn xwayland_shell_state(&mut self) -> &mut XWaylandShellState {
         &mut self.xwayland_shell
@@ -125,19 +144,11 @@ impl XwmHandler for State {
         }
     }
     fn unmapped_window(&mut self, _: XwmId, window: X11Surface) {
-        if let Some(wl) = window.wl_surface() {
-            if let Some(id) = self.id_for(&wl) {
-                self.remove(id);
-            }
-        }
+        self.remove_x11_window(&window);
     }
     fn destroyed_window(&mut self, _: XwmId, window: X11Surface) {
         self.x11_windows.retain(|w| w != &window);
-        if let Some(wl) = window.wl_surface() {
-            if let Some(id) = self.id_for(&wl) {
-                self.remove(id);
-            }
-        }
+        self.remove_x11_window(&window);
     }
     fn configure_request(
         &mut self,
