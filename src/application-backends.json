@@ -1,0 +1,11 @@
+{
+  "peony.desktop": "x11",
+  "peony-home.desktop": "x11",
+  "peony-computer.desktop": "x11",
+  "peony-trash.desktop": "x11",
+  "wps-office-wps.desktop": "x11",
+  "wps-office-prometheus.desktop": "x11",
+  "wps-office-et.desktop": "x11",
+  "wps-office-wpp.desktop": "x11",
+  "wps-office-pdf.desktop": "x11"
+}

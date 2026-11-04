@@ -21,6 +21,12 @@ into argv, never evaluated by a shell. Per-application environment selects the
 private Wayland display and software rendering for the initial SHM path.
 Applications may also be started externally with the advertised WAYLAND_DISPLAY.
 Use a private session bus when an application has a DBus single-instance path.
+Application children drop the XR owner's effective, permitted, inheritable and
+ambient capabilities before exec, so GTK image-loader sandboxes can run normally.
+Peony and WPS desktop entries select the private Xwayland display through
+`src/application-backends.json`; other applications default to native Wayland.
+A desktop entry may override its backend with `X-XR-Backend=x11` or `wayland`.
+These policies select transport; target application acceptance is recorded separately.
 Package installation must not start this server or change the existing desktop.
 
 Current implementation has private Wayland, xdg toplevel/popup state,

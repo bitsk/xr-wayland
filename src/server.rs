@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 use crate::bridge::{Bridge, Incoming, Outgoing};
+mod application;
 mod xwayland;
 use anyhow::{Context, Result, bail, ensure};
 use serde_json::{Value, json};
@@ -753,11 +754,6 @@ impl State {
         Ok(())
     }
     pub fn launch(&mut self, id: &str, x11: bool) -> Result<()> {
-        if x11 && self.x11_display.is_none() {
-            ensure!(self.xwayland_loop.is_some(), "Xwayland was not enabled");
-            self.pending_x11_launches.push(id.to_owned());
-            return Ok(());
-        }
         ensure!(
             !id.contains('/') && !id.contains(".."),
             "application ID must be a desktop basename"
@@ -787,6 +783,7 @@ impl State {
         let text = std::fs::read_to_string(&path)?;
         let mut group = false;
         let mut exec = None;
+        let mut backend = None;
         for line in text.lines() {
             let line = line.trim();
             if line.starts_with('[') {
@@ -795,10 +792,19 @@ impl State {
                 if let Some(value) = line.strip_prefix("Exec=") {
                     exec = Some(value.to_owned());
                 }
+                if let Some(value) = line.strip_prefix("X-XR-Backend=") {
+                    backend = Some(value.to_owned());
+                }
                 if line == "Hidden=true" {
                     bail!("desktop application is hidden");
                 }
             }
+        }
+        let x11 = x11 || application::use_x11(&filename, backend.as_deref())?;
+        if x11 && self.x11_display.is_none() {
+            ensure!(self.xwayland_loop.is_some(), "Xwayland was not enabled");
+            self.pending_x11_launches.push(id.to_owned());
+            return Ok(());
         }
         let words = shlex::split(&exec.context("desktop entry has no Exec")?)
             .context("invalid desktop Exec quoting")?;
@@ -838,8 +844,17 @@ impl State {
                 .env("QT_IM_MODULE", "compose");
         }
         command.process_group(0);
+        // Desktop applications must not inherit the XR display owner's ambient
+        // capabilities: bubblewrap rejects them when GTK starts image loaders.
+        unsafe {
+            command.pre_exec(application::clear_capabilities);
+        }
         let child = command.spawn()?;
-        println!("XR_WAYLAND_APP_START id={id} pid={}", child.id());
+        println!(
+            "XR_WAYLAND_APP_START id={id} pid={} backend={}",
+            child.id(),
+            if x11 { "x11" } else { "wayland" }
+        );
         self.children.push(child);
         Ok(())
     }
