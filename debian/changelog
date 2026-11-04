@@ -1,3 +1,10 @@
+xr-wayland (0.1.7) unstable; urgency=medium
+
+  * Use the X11 keyboard target for real ICCCM focus negotiation.
+  * Preserve native Wayland keyboard and selection/input-method handling.
+
+ -- bits <bigbits@hackx.cc>  Thu, 05 Nov 2026 01:52:30 +0800
+
 xr-wayland (0.1.6) unstable; urgency=medium
 
   * Remove unmapped and destroyed X11 surfaces by their stable window ID.

@@ -1,9 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 use crate::bridge::{Bridge, Incoming, Outgoing};
 mod application;
+mod keyboard_focus;
 mod xwayland;
 use anyhow::{Context, Result, bail, ensure};
+use keyboard_focus::KeyboardFocus;
 use serde_json::{Value, json};
+use smithay::wayland::seat::WaylandFocus;
 use smithay::{
     backend::input::{Axis, AxisSource, ButtonState, KeyState},
     delegate_compositor, delegate_data_device, delegate_input_method_manager,
@@ -596,7 +599,12 @@ impl State {
                 top.send_pending_configure();
             }
         }
-        let surface = id.and_then(|id| self.surfaces.get(&id).map(|s| s.surface.clone()));
+        let surface = id.and_then(|id| {
+            self.surfaces.get(&id).map(|s| KeyboardFocus {
+                surface: s.surface.clone(),
+                x11: s.x11.clone(),
+            })
+        });
         let keyboard = self.seat.get_keyboard().unwrap();
         keyboard.set_focus(self, surface, SERIAL_COUNTER.next_serial());
     }
@@ -1152,7 +1160,7 @@ impl XdgShellHandler for State {
         let seat = self.seat.clone();
         match self
             .popups
-            .grab_popup(root, PopupKind::Xdg(popup), &seat, serial)
+            .grab_popup(root.into(), PopupKind::Xdg(popup), &seat, serial)
         {
             Ok(grab) => {
                 if let Some(keyboard) = seat.get_keyboard() {
@@ -1219,13 +1227,15 @@ impl XdgShellHandler for State {
     }
 }
 impl SeatHandler for State {
-    type KeyboardFocus = WlSurface;
+    type KeyboardFocus = KeyboardFocus;
     type PointerFocus = WlSurface;
     type TouchFocus = WlSurface;
     fn seat_state(&mut self) -> &mut SeatState<Self> {
         &mut self.seat_state
     }
-    fn focus_changed(&mut self, seat: &Seat<Self>, focus: Option<&WlSurface>) {
+    fn focus_changed(&mut self, seat: &Seat<Self>, focus: Option<&KeyboardFocus>) {
+        let surface = focus.and_then(WaylandFocus::wl_surface);
+        let focus = surface.as_deref();
         set_data_device_focus(&self.dh, seat, focus.and_then(|s| s.client()));
         set_primary_focus(&self.dh, seat, focus.and_then(|s| s.client()));
         seat.text_input().leave();
