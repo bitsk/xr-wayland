@@ -1,3 +1,9 @@
+xr-wayland (0.1.3+xr1) unstable; urgency=medium
+
+  * Support the locked ARM64 package build without enabling pending desktop candidates.
+
+ -- bits <bigbits@hackx.cc>  Thu, 12 Nov 2026 19:46:32 +0800
+
 xr-wayland (0.1.7) unstable; urgency=medium
 
   * Use the X11 keyboard target for real ICCCM focus negotiation.
