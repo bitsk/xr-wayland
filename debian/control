@@ -2,13 +2,13 @@ Source: xr-wayland
 Section: x11
 Priority: optional
 Maintainer: bits <bigbits@hackx.cc>
-Build-Depends: debhelper-compat (= 13), cargo (>= 1.88), rustc (>= 1.88), python3, pkg-config, libxkbcommon-dev, librust-xr-shell-protocols-dev (>= 0.2.0), librust-xr-shell-protocols-dev (<< 0.3.0)
+Build-Depends: debhelper-compat (= 13), cargo (>= 1.88), rustc (>= 1.88), python3, g++, pkg-config, libxkbcommon-dev, librust-xr-shell-protocols-dev (>= 0.2.0), librust-xr-shell-protocols-dev (<< 0.4.0)
 Standards-Version: 4.7.0
 Rules-Requires-Root: no
 
 Package: xr-window-server
 Architecture: any
-Depends: ${shlibs:Depends}, ${misc:Depends}, xr-shell (>= 0.2.0)
+Depends: ${shlibs:Depends}, ${misc:Depends}, xr-shell (>= 0.2.15)
 Recommends: xwayland
 Description: Private Wayland and Xwayland application server for UKUI XR
  Owns application surfaces, configure serials and seat input on an isolated

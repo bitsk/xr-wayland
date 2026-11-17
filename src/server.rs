@@ -299,10 +299,30 @@ impl State {
         let Some(s) = self.surfaces.get(&id) else {
             return;
         };
+        // Transport (Xwayland) is not a window role. Only managed, independent
+        // application windows get Shell's companion controls; menus, tooltips,
+        // splash windows and transient children remain parent-owned surfaces.
+        let window_controls = if let Some(x11) = &s.x11 {
+            use smithay::xwayland::xwm::WmWindowType;
+            !x11.is_override_redirect()
+                && x11.is_transient_for().is_none()
+                && matches!(
+                    x11.window_type(),
+                    None | Some(
+                        WmWindowType::Normal | WmWindowType::Dialog | WmWindowType::Utility
+                    )
+                )
+        } else {
+            s.role == "toplevel"
+        };
         self.emit("WindowState", json!({"surface_id":id.to_string(),"app_id":s.app_id,"title":s.title,
             "width":s.width,"height":s.height,"configured_width":s.configured.0,"configured_height":s.configured.1,
             "acked_configure":s.ack.to_string(),"parent_surface_id":s.parent.map(|v|v.to_string()),
-            "role":s.role,"popup_x":s.popup_position.0,"popup_y":s.popup_position.1,
+            "role":s.role,"window_controls":window_controls,
+            "x11_override_redirect":s.x11.as_ref().map(|x|x.is_override_redirect()),
+            "x11_window_type":s.x11.as_ref().map(|x|format!("{:?}",x.window_type())),
+            "client_side_decorated":s.x11.as_ref().map(|x|x.is_decorated()),
+            "popup_x":s.popup_position.0,"popup_y":s.popup_position.1,
             "mapped":s.mapped,"commit_serial":s.commit.to_string()}));
     }
     fn remove(&mut self, id: u64) {
@@ -850,6 +870,30 @@ impl State {
                 // QPA display. X11 children need their own platform context.
                 .env("GTK_IM_MODULE", "xim")
                 .env("QT_IM_MODULE", "compose");
+            let decoration = if filename.starts_with("peony") {
+                Some("peony")
+            } else if filename.starts_with("wps-office-") {
+                Some("wps")
+            } else {
+                None
+            };
+            if let Some(policy) = decoration {
+                let library = std::env::var_os("XR_QT_DECORATION_LIBRARY")
+                    .map(std::path::PathBuf::from)
+                    .unwrap_or_else(|| "/usr/lib/xr/wayland/libxr-qt-decoration.so".into());
+                ensure!(
+                    library.is_file(),
+                    "XR Qt decoration adapter is not installed"
+                );
+                let mut preload = library.into_os_string();
+                if let Some(existing) = std::env::var_os("LD_PRELOAD").filter(|v| !v.is_empty()) {
+                    preload.push(" ");
+                    preload.push(existing);
+                }
+                command
+                    .env("XR_QT_EXTERNAL_CONTROLS", policy)
+                    .env("LD_PRELOAD", preload);
+            }
         }
         command.process_group(0);
         // Desktop applications must not inherit the XR display owner's ambient

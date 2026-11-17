@@ -11,3 +11,9 @@ Package installation must not launch a competing desktop or modify runtime
 selection. Public files contain no private paths, addresses or credentials.
 Keep cross-component architecture in the documentation repository. Do not create
 provenance directories. Record build, actual QEMU and physical validation separately.
+
+## XR Spatial Engineering Constraints
+
+Follow `openkylin-xr-docs/wiki/xr-spatial-guidelines-and-issues.md`:
+- **Spatial DPI / `dmm` Output Scaling**: Coordinate `wl_output` logical geometry and buffer scale with Shell's angular density (`dmm`) so 2D Wayland/Xwayland surfaces render sharp text at their physical meter size in 3D space.
+- **Subsurface & Popup Spatial Hierarchy**: Preserve parent-relative offsets and depth layering metadata so popups and IME candidates project onto the parent window's 3D oriented/curved frame with matching hit-test geometry.

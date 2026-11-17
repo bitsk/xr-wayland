@@ -61,3 +61,5 @@ for package in metadata["packages"]:
             texts.append("LICENSE.md")
     index.append({"name": package["name"], "version": package["version"], "license": package["license"], "texts": texts})
 (licenses / "index.json").write_text(json.dumps(index, indent=2) + "\n")
+
+subprocess.run(["python3", str(root / "tools/build-qt-decoration.py")], check=True)

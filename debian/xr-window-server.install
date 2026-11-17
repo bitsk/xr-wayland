@@ -1,2 +1,3 @@
 target/release/xr-window-server usr/bin
 build/third-party-licenses usr/share/doc/xr-window-server
+target/release/libxr-qt-decoration.so usr/lib/xr/wayland

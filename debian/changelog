@@ -1,3 +1,12 @@
+xr-wayland (0.1.8) unstable; urgency=medium
+
+  * Classify managed X11 application windows separately from popup surfaces.
+  * Publish companion-control eligibility and X11 decoration metadata.
+  * Replace Peony/WPS system window buttons with external XR controls,
+    preserving client document tabs, menus and toolbars.
+
+ -- bits <bigbits@hackx.cc>  Tue, 17 Nov 2026 10:03:12 +0800
+
 xr-wayland (0.1.3+xr1) unstable; urgency=medium
 
   * Support the locked ARM64 package build without enabling pending desktop candidates.

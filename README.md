@@ -82,7 +82,7 @@ rendered the resulting text; target acceptance must inspect the actual client.
 
 ## Debian package
 
-The independent `xr-window-server` package depends on xr-shell >= 0.2.0
+The independent `xr-window-server` package depends on xr-shell >= 0.2.15
 and the library versions detected by dpkg-shlibdeps. Xwayland is recommended
 for the optional X11 path. No package script enables services or opens displays.
 
@@ -121,3 +121,17 @@ inheriting a Wayland-only input module from the XR profile. Native Wayland
 children retain the profile's input-method environment. XIM requires a reachable
 input-method server for language conversion; selecting the context alone does
 not establish CJK preedit or committed-text acceptance.
+
+`WindowState.window_controls` identifies windows eligible for Shell companion
+controls independently of transport. Native toplevels and managed independent
+X11 normal/dialog/utility windows qualify; X11 override-redirect, transient,
+menu, tooltip and splash surfaces do not. X11 type and client-decoration
+metadata are included for inspection. Application toolbars remain application
+content, and the service does not add a conventional server titlebar.
+
+Peony and WPS desktop launches preload the private Qt decoration adapter only
+for that application process. It resolves the application's own Qt namespace
+and hides identified system window buttons, retaining document tabs, tab-close
+buttons and application menus/toolbars. It neither crops pixels nor changes
+the system desktop theme. Development builds may set
+`XR_QT_DECORATION_LIBRARY` to the built library path.
