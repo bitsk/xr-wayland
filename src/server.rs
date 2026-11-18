@@ -110,6 +110,13 @@ struct Surface {
     popup_position: (i32, i32),
     mapped: bool,
 }
+struct LaunchRequest {
+    origin: Value,
+    app_id: String,
+    pid: Option<u32>,
+    started: Instant,
+    exit: Option<String>,
+}
 struct Snapshot {
     command: Outgoing,
 }
@@ -159,6 +166,7 @@ pub struct State {
     clipboard_reads: Vec<ClipboardRead>,
     clipboard_requests: Vec<(SelectionTarget, String)>,
     children: Vec<Child>,
+    launches: Vec<LaunchRequest>,
     socket_name: String,
     pub bridge: Bridge,
     snapshots_sent: u64,
@@ -233,6 +241,7 @@ impl State {
             clipboard_reads: Vec::new(),
             clipboard_requests: Vec::new(),
             children: Vec::new(),
+            launches: Vec::new(),
             socket_name,
             bridge,
             snapshots_sent: 0,
@@ -519,6 +528,7 @@ impl State {
                         "BufferRelease" => self.releases += 1,
                         "FocusChanged" | "SurfaceInput" | "WindowIntent" => {
                             let kind = message["type"].as_str().unwrap();
+                            let child_count = self.children.len();
                             let result =
                                 if let Some(generation) = p["window_server_generation"].as_str() {
                                     if generation != self.bridge.generation {
@@ -538,7 +548,21 @@ impl State {
                                     if let Err(error) = &result {
                                         response["message"] = format!("{error:#}").into();
                                     }
-                                    self.emit("RequestResult", response);
+                                    if kind == "WindowIntent"
+                                        && p["intent"] == "launch"
+                                        && result.is_ok()
+                                    {
+                                        self.launches.push(LaunchRequest {
+                                            origin: response,
+                                            app_id: p["app_id"].as_str().unwrap_or_default().into(),
+                                            pid: (self.children.len() > child_count)
+                                                .then(|| self.children.last().unwrap().id()),
+                                            started: Instant::now(),
+                                            exit: None,
+                                        });
+                                    } else {
+                                        self.emit("RequestResult", response);
+                                    }
                                 }
                             }
                             if let Err(error) = result {
@@ -812,6 +836,9 @@ impl State {
         let mut group = false;
         let mut exec = None;
         let mut backend = None;
+        let mut terminal = false;
+        let mut name = filename.clone();
+        let mut directory = None;
         for line in text.lines() {
             let line = line.trim();
             if line.starts_with('[') {
@@ -822,6 +849,18 @@ impl State {
                 }
                 if let Some(value) = line.strip_prefix("X-XR-Backend=") {
                     backend = Some(value.to_owned());
+                }
+                if line == "Terminal=true" {
+                    terminal = true;
+                }
+                if let Some(value) = line.strip_prefix("Name=") {
+                    name = value.into();
+                }
+                if let Some(value) = line.strip_prefix("Name[zh_CN]=") {
+                    name = value.into();
+                }
+                if let Some(value) = line.strip_prefix("Path=").filter(|s| !s.is_empty()) {
+                    directory = Some(value.to_owned());
                 }
                 if line == "Hidden=true" {
                     bail!("desktop application is hidden");
@@ -851,16 +890,31 @@ impl State {
             })
             .collect();
         let (program, args) = words.split_first().context("desktop Exec is empty")?;
-        let mut command = Command::new(program);
+        let mut command = if terminal {
+            let mut terminal = Command::new("mate-terminal");
+            terminal.args(["--disable-factory", "--execute", program]);
+            terminal
+        } else {
+            Command::new(program)
+        };
+        if let Some(directory) = directory {
+            command.current_dir(directory);
+        }
         command
             .args(args)
             .env("WAYLAND_DISPLAY", &self.socket_name)
             .env("QT_QPA_PLATFORM", "wayland")
+            .env("QT_WAYLAND_SHELL_INTEGRATION", "xdg-shell")
             .env("QT_QUICK_BACKEND", "software")
             .env("GDK_BACKEND", "wayland")
             .env("GSK_RENDERER", "cairo")
             .env("GTK_CSD", "0")
             .stdin(Stdio::null());
+        // Some Wayland clients also query X11 desktop services. Keep that display
+        // available without changing their explicitly selected QPA/GDK backend.
+        if let Some(display) = &self.x11_display {
+            command.env("DISPLAY", display);
+        }
         if x11 {
             command
                 .env("DISPLAY", self.x11_display.as_ref().unwrap())
@@ -901,7 +955,9 @@ impl State {
         unsafe {
             command.pre_exec(application::clear_capabilities);
         }
-        let child = command.spawn()?;
+        let child = command
+            .spawn()
+            .with_context(|| format!("启动 {name} 失败"))?;
         println!(
             "XR_WAYLAND_APP_START id={id} pid={} backend={}",
             child.id(),
@@ -932,8 +988,22 @@ impl State {
         self.poll_clipboard();
         if self.x11_display.is_some() {
             for app in std::mem::take(&mut self.pending_x11_launches) {
-                if let Err(error) = self.launch(&app, true) {
-                    eprintln!("XR_XWAYLAND_APP_ERROR={error:#}");
+                match self.launch(&app, true) {
+                    Ok(()) => {
+                        let pid = self.children.last().map(Child::id);
+                        for request in &mut self.launches {
+                            if request.app_id == app && request.pid.is_none() {
+                                request.pid = pid;
+                            }
+                        }
+                    }
+                    Err(error) => {
+                        for request in &mut self.launches {
+                            if request.app_id == app {
+                                request.exit = Some(format!("{error:#}"));
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -949,10 +1019,61 @@ impl State {
         self.children.retain_mut(|child| match child.try_wait() {
             Ok(Some(status)) => {
                 println!("XR_WAYLAND_APP_EXIT pid={} status={status}", child.id());
+                for request in &mut self.launches {
+                    if request.pid == Some(child.id()) {
+                        request.exit = Some(status.to_string());
+                    }
+                }
                 false
             }
             _ => true,
         });
+        self.poll_launches();
+    }
+    fn poll_launches(&mut self) {
+        let mut pending = Vec::new();
+        for request in std::mem::take(&mut self.launches) {
+            let mapped = self.surfaces.values().any(|surface| {
+                if !surface.mapped || surface.parent.is_some() {
+                    return false;
+                }
+                let pid = surface.x11.as_ref().and_then(|x| x.pid()).or_else(|| {
+                    surface
+                        .surface
+                        .client()?
+                        .get_credentials(&self.dh)
+                        .ok()
+                        .map(|c| c.pid as u32)
+                });
+                let same_process = request.pid.is_some_and(|leader| {
+                    pid.is_some_and(|pid| {
+                        pid == leader || unsafe { libc::getpgid(pid as i32) } == leader as i32
+                    })
+                });
+                same_process || application::same_app(&request.app_id, &surface.app_id)
+            });
+            let expired = request.started.elapsed().as_secs() >= 20;
+            let failed_exit = request.started.elapsed().as_secs() >= 2
+                && request.exit.as_ref().is_some_and(|s| s != "exit status: 0");
+            if mapped || expired || failed_exit {
+                let mut response = request.origin;
+                response["success"] = mapped.into();
+                response["app_id"] = request.app_id.clone().into();
+                if !mapped {
+                    response["message"] = format!(
+                        "启动失败：{}（{}）",
+                        request.app_id,
+                        request.exit.as_deref().unwrap_or("20 秒内未出现应用窗口")
+                    )
+                    .into();
+                }
+                println!("XR_WAYLAND_LAUNCH_RESULT={response}");
+                self.emit("RequestResult", response);
+            } else {
+                pending.push(request);
+            }
+        }
+        self.launches = pending;
     }
     fn poll_clipboard(&mut self) {
         let mut requests: Vec<_> = std::mem::take(&mut self.clipboard_requests)

@@ -33,3 +33,10 @@ pub(super) fn clear_capabilities() -> io::Result<()> {
     }
     Ok(())
 }
+
+/// Exact desktop/app IDs and namespace suffixes cover single-instance activation.
+pub(super) fn same_app(desktop: &str, app: &str) -> bool {
+    let desktop = desktop.trim_end_matches(".desktop").to_lowercase();
+    let app = app.to_lowercase();
+    !app.is_empty() && (desktop == app || desktop.rsplit('.').next() == Some(app.as_str()))
+}

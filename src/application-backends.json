@@ -7,5 +7,7 @@
   "wps-office-prometheus.desktop": "x11",
   "wps-office-et.desktop": "x11",
   "wps-office-wpp.desktop": "x11",
-  "wps-office-pdf.desktop": "x11"
+  "wps-office-pdf.desktop": "x11",
+  "engrampa.desktop": "x11",
+  "wps-office-officeassistant.desktop": "x11"
 }

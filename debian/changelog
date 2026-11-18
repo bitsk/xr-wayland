@@ -1,3 +1,9 @@
+xr-wayland (0.1.9) unstable; urgency=medium
+
+  * Launch applications through the supported Wayland shell, wrap terminal entries, and report missing windows.
+
+ -- bits <bigbits@hackx.cc>  Thu, 19 Nov 2026 00:02:25 +0800
+
 xr-wayland (0.1.8) unstable; urgency=medium
 
   * Classify managed X11 application windows separately from popup surfaces.
